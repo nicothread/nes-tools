@@ -17,6 +17,12 @@ typedef struct {
     int tileset_count;
     unsigned char nametable[960];
     int nametable_index;
+    bool with_nametable;
+    int source_tiles_width;
+    int source_tiles_height;
+    int output_tiles_width; // Multiple of 32 to avoid miss aligned row
+    int output_tiles_height;
+    int output_ratio;
 } NES_Screen;
 
 
@@ -30,27 +36,25 @@ void pixel_to_nes_bits(int pixel, unsigned char *bit0, unsigned char *bit1) {
 }
 
 /**
- * Extracts pixels from an 8x8 tile and converts them to NES CHR format
+ * Extracts pixels from a 8x8 tile and converts them to NES CHR format
  */
-void extract_tile(png_bytep *row_pointers, int tile_x, int tile_y, Tile *output_tile) {
-    memset(output_tile, 0, sizeof(Tile));
+void extract_tile(const png_bytep *row_pointers, int tile_x, int tile_y, Tile *output_tile) {
 
     int start_x = tile_x * TILE_WIDTH;
     int start_y = tile_y * TILE_HEIGHT;
 
     for (int py = 0; py < TILE_HEIGHT; py++) {
-        unsigned char byte0 = 0;
-        unsigned char byte1 = 0;
+        const int y = start_y + py;
+        unsigned char byte0 = 0, byte1 = 0;
 
         for (int px = 0; px < TILE_WIDTH; px++) {
-            int x = start_x + px;
-            int y = start_y + py;
+            const int x = start_x + px;
 
             // Retrieve a pixel (palette indexed 0-3)
             unsigned char pixel = row_pointers[y][x];
             pixel = pixel & 0x3;  // keep only 2 bits for color
 
-            // Add the bite i the appropriate byte
+            // Add the bite in the appropriate byte
             byte0 = (byte0 << 1) | (pixel & 1);
             byte1 = (byte1 << 1) | ((pixel >> 1) & 1);
         }
@@ -64,45 +68,57 @@ bool tile_cmp(Tile* t1, Tile* t2) {
     return memcmp(t1, t2, sizeof(Tile)) == 0;
 }
 
-void process_tile(NES_Screen* nesScreen, Tile* new_tile) {
-    // Reuse an identical tile if possible
-    for (int i = 0; i < nesScreen->tileset_count; i++) {
-        if (tile_cmp(new_tile, &nesScreen->tileset[i])) {
-            nesScreen->nametable[nesScreen->nametable_index] = i;
-            nesScreen->nametable_index++;
-            return;
-        }
-    }
-    // It's a new tile then add it
-    if (nesScreen->tileset_count < 256) {
-        nesScreen->tileset[nesScreen->tileset_count] = *new_tile;
-        nesScreen->nametable[nesScreen->nametable_index] = nesScreen->tileset_count;
-        nesScreen->tileset_count++;
-        nesScreen->nametable_index++;
-    }
-}
-
-NES_Screen extract_tile_and_nametable( png_bytep *row_pointers, int tiles_width, int tiles_height) {
-    NES_Screen nesScreen = {0};
-    nesScreen.tileset_count = 0;
-    nesScreen.tileset[nesScreen.tileset_count] = (Tile){0};
-    nesScreen.nametable_index=0;
-
-    for (int ty = 0; ty < tiles_height; ty++) {
-        for (int tx = 0; tx < tiles_width; tx++) {
-
-            Tile tile = {0};
-            extract_tile(row_pointers, tx, ty, &tile);
-            process_tile(&nesScreen, &tile);
-
-            if (nesScreen.tileset_count >= 256) {
-                // Oups! There are too many tiles in the source for a NES :
-                fprintf(stderr, "!!> Warning: tileset is full. Some tiles will be lost.\n");
-                return nesScreen;
+void process_tile(NES_Screen* nesScreen, Tile new_tile) {
+    // Reuse an identical tile if possible and nametable is activated
+    if (nesScreen->with_nametable) {
+        for (int i = 0; i < nesScreen->tileset_count; i++) {
+            if (tile_cmp(&new_tile, &nesScreen->tileset[i])) {
+                nesScreen->nametable[nesScreen->nametable_index] = i;
+                nesScreen->nametable_index++;
+                return;
             }
         }
     }
-    return nesScreen;
+
+    // It's a new tile then add it
+    if (nesScreen->tileset_count < 256) {
+        nesScreen->tileset[nesScreen->tileset_count] = new_tile;
+        if (nesScreen->with_nametable) {
+            nesScreen->nametable[nesScreen->nametable_index] = nesScreen->tileset_count;
+            nesScreen->nametable_index++;
+        }
+        nesScreen->tileset_count++;
+    }
+}
+
+void fill_row_with_empty_tile(NES_Screen* nesScreen) {
+    Tile empty_tile = {0};
+    process_tile(nesScreen, empty_tile);
+}
+
+void extract_tile_and_nametable(NES_Screen* nesScreen, const png_bytep *row_pointers) {
+
+    printf("Extracting tiles from source file...\n");
+    nesScreen->output_tiles_width =  ((nesScreen->source_tiles_width + (nesScreen->output_ratio-1)) / nesScreen->output_ratio) * nesScreen->output_ratio;
+    nesScreen->output_tiles_height = nesScreen->source_tiles_height;
+
+    printf("Calculated output tiles to fit %d : %ux%u\n", nesScreen->output_ratio, nesScreen->output_tiles_width, nesScreen->output_tiles_height);
+
+    for (int ty = 0; ty < nesScreen->source_tiles_height; ty++) {
+        for (int tx = 0; tx < nesScreen->source_tiles_width; tx++) {
+            Tile tile = {0};
+            extract_tile(row_pointers, tx, ty, &tile);
+            process_tile(nesScreen, tile);
+        }
+        for (int tx = nesScreen->source_tiles_width; tx < nesScreen->output_tiles_width; tx++) {
+            fill_row_with_empty_tile(nesScreen);
+        }
+    }
+
+    if (nesScreen->tileset_count >= 256) {
+        // Oups! There are too many tiles in the source for a NES :
+        fprintf(stderr, "!!> Warning: tileset is full. Some tiles is lost.\n");
+    }
 }
 
 int write_nesScreen(NES_Screen* nesScreen, const char *chr_path, const char *nametable_path) {
@@ -130,22 +146,24 @@ int write_nesScreen(NES_Screen* nesScreen, const char *chr_path, const char *nam
         }
     }
     fclose(chr_file);
-    printf("CHR file saved (%d unique tiles, 4096 octets) : %s\n", nesScreen->tileset_count, chr_path);
+    printf("\n> CHR file saved (%d unique tiles, 4096 octets) : %s\n", nesScreen->tileset_count, chr_path);
 
     // Write NAM file (nametable)
-    FILE *nametable_file = fopen(nametable_path, "wb");
-    if (!nametable_file) {
-        fprintf(stderr, "Error: File open failed for %s\n", nametable_path);
-        return 1;
-    }
-    written = fwrite(nesScreen->nametable, 1, 960, nametable_file);
-    if (written != 960) {
-        fprintf(stderr, "Error: Failed to write nametable to file %s\n", nametable_path);
+    if (nesScreen->with_nametable) {
+        FILE *nametable_file = fopen(nametable_path, "wb");
+        if (!nametable_file) {
+            fprintf(stderr, "Error: File open failed for %s\n", nametable_path);
+            return 1;
+        }
+        written = fwrite(nesScreen->nametable, 1, 960, nametable_file);
+        if (written != 960) {
+            fprintf(stderr, "Error: Failed to write nametable to file %s\n", nametable_path);
+            fclose(nametable_file);
+            return 1;
+        }
         fclose(nametable_file);
-        return 1;
+        printf("\n> NAMETABLE file saved (%d bytes) : %s\n", 960, nametable_path);
     }
-    fclose(nametable_file);
-    printf("NAMETABLE file saved (%d bytes) : %s\n", 960, nametable_path);
 
     return 0;
 }
@@ -153,7 +171,10 @@ int write_nesScreen(NES_Screen* nesScreen, const char *chr_path, const char *nam
 /**
  * Converts a PNG file to CHR NES format
  */
-int png_to_chr(const char *png_path, const char *chr_path, const char *nametable_path) {
+int png_to_chr(const char *png_path, const char *chr_path, const char *nametable_path, const int output_ratio) {
+    // -------------------------
+    // -- LOAD PNG FILE AND DATA
+
     FILE *fp = fopen(png_path, "rb");
     if (!fp) {
         fprintf(stderr, "Error: File open failed for %s\n", png_path);
@@ -161,7 +182,7 @@ int png_to_chr(const char *png_path, const char *chr_path, const char *nametable
     }
 
     // Init libpng
-    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    png_structp png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, nullptr, nullptr);
     if (!png) {
         fprintf(stderr, "Error: unable to create the structure PNG\n");
         fclose(fp);
@@ -184,33 +205,43 @@ int png_to_chr(const char *png_path, const char *chr_path, const char *nametable
     png_byte color_type = png_get_color_type(png, info);
     png_byte bit_depth = png_get_bit_depth(png, info);
 
+    printf("\nConversion: %s -> CHR: %s, NAMETABLE: %s\n", png_path, chr_path, nametable_path);
+    printf("Input Dimensions: %ux%u pixels\n", width, height);
+    printf("Color Depth: %d bits\n", bit_depth);
+
     // Check size of source file
     if (width % TILE_WIDTH != 0 || height % TILE_HEIGHT != 0) {
         fprintf(stderr, "Error: PNG size not valid (%ux%u). Must be multiple de 8x8\n",
                 width, height);
-        png_destroy_read_struct(&png, &info, NULL);
+        png_destroy_read_struct(&png, &info, nullptr);
         fclose(fp);
         return 1;
     }
 
     // Check colors profile
-    if (color_type == PNG_COLOR_TYPE_RGB) {
-        png_set_palette_to_rgb(png);
+    if (color_type == PNG_COLOR_TYPE_RGB || color_type == PNG_COLOR_TYPE_RGB_ALPHA) {
+        fprintf(stderr, "Error: PNG must be indexed color (palette-based), try to fix RGB color to grayscale\n");
+        png_set_rgb_to_gray_fixed(png, 1, -1, -1);
     }
     if (bit_depth == 16) {
+        fprintf(stderr, "Error: PNG must be 8 bits per pixel, try to fix 16 bits per pixels to 8 bits per pixel\n");
         png_set_strip_16(png);
     }
-    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8) {
-        png_set_expand_gray_1_2_4_to_8(png);
+    if (color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+        fprintf(stderr, "Error: PNG must be indexed color (palette-based), try to fix grayscale alpha to grayscale\n");
+        png_set_strip_alpha(png);
     }
-
+    if (bit_depth < 8) {
+        fprintf(stderr, "Error: PNG must be 8 bits per pixel, try to fix %d bits per pixels to 8 bits per pixel\n", bit_depth);
+        png_set_packing(png);
+    }
     png_read_update_info(png, info);
 
     // Memory allocation
     png_bytep *row_pointers = (png_bytep *)malloc(sizeof(png_bytep) * height);
     if (!row_pointers) {
         fprintf(stderr, "Error: Memory allocation failed\n");
-        png_destroy_read_struct(&png, &info, NULL);
+        png_destroy_read_struct(&png, &info, nullptr);
         fclose(fp);
         return 1;
     }
@@ -231,21 +262,37 @@ int png_to_chr(const char *png_path, const char *chr_path, const char *nametable
 
     png_read_image(png, row_pointers);
 
-    int tiles_width = width / TILE_WIDTH;
-    int tiles_height = height / TILE_HEIGHT;
+    int tiles_width = (int) width / TILE_WIDTH;
+    int tiles_height = (int) height / TILE_HEIGHT;
     int total_tiles = tiles_width * tiles_height;
 
-    printf("Conversion: %s -> %s\n", png_path, chr_path);
-    printf("Dimensions: %ux%u pixels (%dx%d tiles)\n", width, height, tiles_width, tiles_height);
+    // -- END of LOAD PNG FILE AND DATA
+    // --------------------------------
+
+    NES_Screen nesScreen = {0};
+    nesScreen.with_nametable = (nametable_path != nullptr && strlen(nametable_path) > 0);
+    nesScreen.source_tiles_width = tiles_width;
+    nesScreen.source_tiles_height = tiles_height;
+    nesScreen.output_ratio = output_ratio;
 
     if (total_tiles > CHR_MAX) {
-        printf("!!> Before optimization: PNG is too big! A CHR file is limited to %d tiles but the source file has %d tiles.\n",
-                CHR_MAX, total_tiles);
+        if (nesScreen.with_nametable) {
+            printf("!!> Before optimization with the nametable: PNG is too big! A CHR file is limited to %d tiles but the source file has %d tiles.\n",
+                    CHR_MAX, total_tiles);
+        } else {
+            printf("!!> PNG file is too big! A CHR file is limited to %d tiles but the source file has %d tiles.\n",
+             CHR_MAX, total_tiles);
+
+            free(row_pointers);
+            png_destroy_read_struct(&png, &info, nullptr);
+            fclose(fp);
+            return EXIT_FAILURE;
+        }
     }
 
-    NES_Screen nesScreen = extract_tile_and_nametable(row_pointers, tiles_width, tiles_height);
+    extract_tile_and_nametable(&nesScreen, row_pointers);
 
-    // Free memory isn't used for next step:
+    // Free memory, row_pointers isn't used for next step:
     for (png_uint_32 y = 0; y < height; y++) {
         free(row_pointers[y]);
     }
@@ -254,26 +301,87 @@ int png_to_chr(const char *png_path, const char *chr_path, const char *nametable
     fclose(fp);
 
 
-    printf("> %d tiles successfully converted with nametable size %d\n", nesScreen.tileset_count, nesScreen.nametable_index);
-    printf("> write output files:\n\t- CHR: %s\n\t- NAMETABLE: %s\n", chr_path, nametable_path);
+    if (nesScreen.with_nametable) {
+        printf("> %d tiles successfully converted with nametable size %d\n", nesScreen.tileset_count, nesScreen.nametable_index);
+        printf("> write output files:\n\t- CHR: %s\n\t- NAMETABLE: %s\n", chr_path, nametable_path);
+    } else {
+        printf("> %d tiles successfully converted\n", nesScreen.tileset_count);
+        printf("> write output files:\n\t- CHR: %s\n", chr_path, nametable_path);
+    }
 
     return write_nesScreen(&nesScreen, chr_path, nametable_path);
 }
 
+void help() {
+    fprintf(stderr, "Usage: png2chr -i <input.png> -o <output.chr> [-n <output.nametable>] [-r <output.size ratio: 16 or 32>] [--help]\n");
+    fprintf(stderr, "\nRequirements:\n");
+    fprintf(stderr, "  - PNG must be indexed color (palette-based)\n");
+    fprintf(stderr, "  - Dimensions must be multiples of 8x8 pixels\n");
+    fprintf(stderr, "  - Palette colors: 0-3 (2 bits per pixel)\n");
+}
+
 int main(int argc, char *argv[]) {
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s <input.png> <output.chr> <output.nametable>\n", argv[0]);
-        fprintf(stderr, "\nRequirements:\n");
-        fprintf(stderr, "  - PNG must be indexed color (palette-based)\n");
-        fprintf(stderr, "  - Dimensions must be multiples of 8x8 pixels\n");
-        fprintf(stderr, "  - Palette colors: 0-3 (2 bits per pixel)\n");
+
+    // Test required arguments :
+    char *chr_path = nullptr;
+    char *png_path = nullptr;
+    char *nametable_path = nullptr;
+    int output_ratio = 32;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            help();
+            return 0;
+        }
+
+        if (strcmp(argv[i], "-i") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing -i <input.png>\n");
+                help();
+                return 1;
+            }
+            png_path = argv[i];
+        }
+        if (strcmp(argv[i], "-o") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing -o <output.chr>\n");
+                help();
+                return 1;
+            }
+            chr_path = argv[i];
+        }
+        if (strcmp(argv[i], "-n") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing <output.nametable>\n");
+                help();
+                return 1;
+            }
+            nametable_path = argv[i];
+        }
+        if (strcmp(argv[i], "-r") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing <output.size ratio: 16 or 32>\n");
+                help();
+                return 1;
+            }
+            if (strcmp(argv[i], "16") != 0 && strcmp(argv[i], "32") != 0) {
+                fprintf(stderr, "Error: -n <output.size ratio: 16 or 32>\n");
+                help();
+                return 1;
+            }
+            output_ratio = atoi(argv[i]);
+        }
+    }
+
+    if (png_path == nullptr || chr_path == nullptr) {
+        fprintf(stderr, "Error: Missing required arguments -i <input.png> -o <output.chr>\n");
+        help();
         return 1;
     }
 
-    // Test required arguments :
-    if (!argv[1] || !argv[2] || !argv[3]) {
-        fprintf(stderr, "Error: Missing input.png or output.chr or output.nametable\n");
-        return 1;
-    }
-    return png_to_chr(argv[1], argv[2], argv[3]);
+    return png_to_chr(png_path, chr_path, nametable_path, output_ratio);
 }

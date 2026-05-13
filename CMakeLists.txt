@@ -13,6 +13,11 @@ add_executable(png2chr
         src/png2chr.c
 )
 
+# Create executable for png2chr
+add_executable(chr2png
+        src/chr2png.c
+)
+
 target_link_libraries(png2chr ${PNG_LIBRARIES})
 
 # Create executable for ttf2png
