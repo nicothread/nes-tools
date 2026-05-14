@@ -2,33 +2,30 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-// Définition pour inclure l'implémentation de stb_image_write
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-#define SCREEN_WIDTH  256
-#define SCREEN_HEIGHT 240
-#define TILE_SIZE     8
-#define TILES_X       (SCREEN_WIDTH / TILE_SIZE)   // 32
-#define TILES_Y       (SCREEN_HEIGHT / TILE_SIZE)  // 30
-#define NAMETABLE_SIZE 960                         // 32 * 30
+#define TILE_SIZE 8
 
-// Palette par défaut à 4 couleurs (Niveaux de gris : Noir, Gris foncé, Gris clair, Blanc)
 uint32_t palette[4] = {
-    0xFF000000, // Index 0 : Noir (Opaque AARRGGBB en Little Endian: 0xFF pour Alpha)
-    0xFF555555, // Index 1 : Gris Foncé
-    0xFFAAAAAA, // Index 2 : Gris Clair
-    0xFFFFFFFF  // Index 3 : Blanc
+    0xFF000000,
+    0xFF555555,
+    0xFFAAAAAA,
+    0xFFFFFFFF
 };
 
 typedef struct {
-    unsigned char *tileset;
-    int tileset_count;
+    unsigned char *tileset; // 2 Bytes per tile
+    int tileset_count; // == tiles number * 2
     unsigned char *nametable;
     int nametable_count;
     uint32_t *output_pixels;
     int nametable_width;  // used later
     int nametable_height;  // used later
+    int widthPixels;
+    int heightPixels;
+    int columnsNumber;
+    int rowsNumber;
 } NES_Screen;
 
 void free_screen(NES_Screen *screen) {
@@ -85,17 +82,119 @@ int read_chr(NES_Screen *screen, char *chr_path) {
     return 0;
 }
 
+void convert_chr_nametable_to_png(NES_Screen *screen) {
+
+    for (int ty = 0; ty < screen->rowsNumber; ty += 1) {
+
+        for (int tx = 0; tx < screen->columnsNumber; tx++) {
+
+            // Get tile index from nametable, each nam_index is pointing to a tile of TILE_SIZExTILE_SIZE pixels
+            int nam_index = (ty * screen->columnsNumber) + tx;
+            uint8_t tile_index = screen->nametable[nam_index];
+
+            int chr_offset = tile_index * 16; // address of tile in the CHR file
+
+            // Check if tile index is within valid range
+            if (chr_offset + 16 > screen->tileset_count) {
+                chr_offset = 0;
+            }
+
+            // Draw current tile
+            for (int row = 0; row < TILE_SIZE; row++) {
+                uint8_t plane1 = screen->tileset[chr_offset + row];
+                uint8_t plane2 = screen->tileset[chr_offset + row + 8];
+
+                // Draw current tile row
+                for (int col = 0; col < TILE_SIZE; col++) {
+                    // Construct color index (0 to 3) on 2 bits :
+                    // shift left bits to right from the left bit to the right to retrieve MSB in right order
+                    int bit_shift = 7 - col;
+                    uint8_t color_bit1 = (plane1 >> bit_shift) & 0x01; // apply the shift and a mask to get only the shifted bit.
+                    uint8_t color_bit2 = (plane2 >> bit_shift) & 0x01; // apply the shift and a mask to get only the shifted bit.
+                    uint8_t color_index = color_bit1 | (color_bit2 << 1); // Color index is recreated with correct bits order.
+
+                    // Pixel position
+                    int pixel_x = tx * TILE_SIZE + col;
+                    int pixel_y = ty * TILE_SIZE + row;
+                    int target_index = pixel_y * screen->widthPixels + pixel_x;
+
+                    // Apply color
+                    screen->output_pixels[target_index] = palette[color_index];
+                }
+            }
+        }
+    }
+}
+
+void help() {
+    printf("Usage: ./chr2png -c <input.chr> [-n <input.nametable>] -o <output.png> [-r <input.ratio: 16 or 32>]\n");
+}
+
 int main(int argc, char **argv) {
-    if (argc < 4) {
-        fprintf(stderr, "Usage: %s <input.chr> <input.nametable> <output.png>\n", argv[0]);
-        return EXIT_FAILURE;
+
+    // Test required arguments :
+    char *chr_path = nullptr;
+    char *png_path = nullptr;
+    char *nametable_path = nullptr;
+    int input_ratio = 32;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            help();
+            return 0;
+        }
+
+        if (strcmp(argv[i], "-c") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing -i <input.chr>\n");
+                help();
+                return 1;
+            }
+            chr_path = argv[i];
+        }
+        if (strcmp(argv[i], "-o") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing -o <output.png>\n");
+                help();
+                return 1;
+            }
+            png_path = argv[i];
+        }
+        if (strcmp(argv[i], "-n") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing <input.nametable>\n");
+                help();
+                return 1;
+            }
+            nametable_path = argv[i];
+        }
+        if (strcmp(argv[i], "-r") == 0) {
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "Error: Missing <input.ratio: 16 or 32>\n");
+                help();
+                return 1;
+            }
+            if (strcmp(argv[i], "16") != 0 && strcmp(argv[i], "32") != 0) {
+                fprintf(stderr, "Error: -n <input.ratio: 16 or 32>\n");
+                help();
+                return 1;
+            }
+            input_ratio = atoi(argv[i]);
+        }
     }
 
-    char* chr_path = argv[1];
-    char* nam_path = argv[2];
-    char* png_path = argv[3];
+    if (png_path == nullptr || chr_path == nullptr) {
+        fprintf(stderr, "Error: Missing required arguments -c <input.chr> -o <output.png>\n");
+        help();
+        return 1;
+    }
 
     NES_Screen screen = {0};
+    screen.columnsNumber = input_ratio;
 
     // Read CHR file
     if (read_chr(&screen, chr_path)) {
@@ -104,73 +203,46 @@ int main(int argc, char **argv) {
     }
 
     // Read nametable
-    read_nametable(&screen, nam_path);
+    if (nametable_path != nullptr)
+    if (read_nametable(&screen, nametable_path)) {
+        free_screen(&screen);
+        return EXIT_FAILURE;
+    }
+
+    // ScreeWidth is number of tiles by row * Size of a tile in pixels
+    screen.widthPixels = screen.columnsNumber * TILE_SIZE;
+
+    // Try to detect screen height output with input tiles/nametable and columnsNumber
+    if (nametable_path == nullptr) {
+        // ScreenHeight is number of tiles in total ((tilesetCount/(TileSize*2 (format 2BPP))) / number tiles per row ) * Size of a tile in pixels
+        screen.heightPixels = ((screen.tileset_count / (TILE_SIZE*2)) / screen.columnsNumber) * TILE_SIZE;
+        screen.rowsNumber = ((screen.tileset_count / TILE_SIZE*2) / screen.columnsNumber);
+    } else {
+        // ScreenHeight is number of indexes in the nametable divide by number of tiles per row * TILE_SIZE
+        screen.heightPixels = (screen.nametable_count / screen.columnsNumber) * TILE_SIZE;
+        screen.rowsNumber = (screen.nametable_count / screen.columnsNumber);
+    }
+
+    printf("Output size: %ux%u\n", screen.widthPixels, screen.heightPixels);
 
     // Output memory allocation
-    screen.output_pixels = malloc(SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint32_t));
+    screen.output_pixels = malloc(screen.widthPixels * screen.heightPixels * sizeof(uint32_t));
     if (!screen.output_pixels) {
         perror("Memory allocation issue.");
         free_screen(&screen);
         return EXIT_FAILURE;
     }
 
+    convert_chr_nametable_to_png(&screen);
 
-
-    // 5. Rendu de l'écran tuile par tuile
-    for (int ty = 0; ty < TILES_Y; ty++) {
-        for (int tx = 0; tx < TILES_X; tx++) {
-
-            // Récupération de l'index de la tuile courante dans la Nametable
-            int nam_index = ty * TILES_X + tx;
-            uint8_t tile_index = screen.nametable[nam_index];
-
-            // Calcul du décalage mémoire dans le fichier CHR (16 octets par tuile)
-            int chr_offset = tile_index * 16;
-
-            // Vérification que la tuile demandée ne dépasse pas la taille du fichier CHR fourni
-            if (chr_offset + 16 > screen.tileset_count) {
-                chr_offset = 0; // Sécurité : pointe vers la tuile 0 si hors limites
-            }
-
-            // Dessin des 8 lignes de la tuile courante
-            for (int row = 0; row < TILE_SIZE; row++) {
-                // Le format CHR de la NES utilise 2 plans séparés de 8 octets pour former la couleur
-                uint8_t plane1 = screen.tileset[chr_offset + row];
-                uint8_t plane2 = screen.tileset[chr_offset + row + 8];
-
-                // Dessin des 8 pixels de la ligne (de gauche à droite)
-                for (int col = 0; col < TILE_SIZE; col++) {
-                    // Les bits de poids fort correspondent aux pixels de gauche
-                    int bit_shift = 7 - col;
-
-                    // Reconstruction de l'index de couleur (0 à 3) sur 2 bits
-                    uint8_t color_bit1 = (plane1 >> bit_shift) & 0x01;
-                    uint8_t color_bit2 = (plane2 >> bit_shift) & 0x01;
-                    uint8_t color_index = color_bit1 | (color_bit2 << 1);
-
-                    // Calcul de la position absolue du pixel dans le tampon d'image final
-                    int pixel_x = tx * TILE_SIZE + col;
-                    int pixel_y = ty * TILE_SIZE + row;
-                    int target_index = pixel_y * SCREEN_WIDTH + pixel_x;
-
-                    // Application de la couleur de la palette
-                    screen.output_pixels[target_index] = palette[color_index];
-                }
-            }
-        }
-    }
-
-    // 6. Écriture du tampon de pixels au format PNG
-    int success = stbi_write_png(argv[3], SCREEN_WIDTH, SCREEN_HEIGHT, 4, screen.output_pixels, SCREEN_WIDTH * sizeof(uint32_t));
-
-    // Libération des ressources
+    // Write pixel memory buffer
+    const int success = stbi_write_png(png_path, screen.widthPixels, screen.heightPixels, 4, screen.output_pixels, screen.widthPixels * sizeof(uint32_t));
     free_screen(&screen);
 
     if (success) {
-        printf("Conversion réussie ! Image enregistrée sous : %s\n", argv[3]);
+        printf("Successfully converted  %s\n", png_path);
         return EXIT_SUCCESS;
-    } else {
-        fprintf(stderr, "Erreur lors de la génération du fichier PNG.\n");
-        return EXIT_FAILURE;
     }
+    fprintf(stderr, "An error occurred during PNG file conversion.\n");
+    return EXIT_FAILURE;
 }
