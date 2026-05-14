@@ -64,12 +64,12 @@ int parse_args(int argc, char *argv[], char **ttf_path, char **png_path,
     }
 
     if (!chars->chars || chars->count == 0 || config->width <= 0 || config->height <= 0) {
-        fprintf(stderr, "Error: Missing or invalid arguments\n");
+        fprintf(stderr, "!!> Error: Missing or invalid arguments\n");
         return 1;
     }
 
     if (!(*ttf_path) || !(*png_path)) {
-        fprintf(stderr, "Error: Missing input.ttf or output.png\n");
+        fprintf(stderr, "!!> Error: Missing input.ttf or output.png\n");
         return 1;
     }
 
@@ -85,7 +85,7 @@ int create_png_image(const char *output_path, png_uint_32 width, png_uint_32 hei
     // Allocate row pointers
     *row_pointers = (png_bytep *)malloc(sizeof(png_bytep) * height);
     if (!*row_pointers) {
-        fprintf(stderr, "Error: Memory allocation failed for row pointers\n");
+        fprintf(stderr, "!!> Error: Memory allocation failed for row pointers\n");
         return 1;
     }
 
@@ -93,7 +93,7 @@ int create_png_image(const char *output_path, png_uint_32 width, png_uint_32 hei
     for (png_uint_32 y = 0; y < height; y++) {
         (*row_pointers)[y] = (png_byte *)calloc(width, sizeof(png_byte));
         if (!(*row_pointers)[y]) {
-            fprintf(stderr, "Error: Memory allocation failed for row %u\n", y);
+            fprintf(stderr, "!!> Error: Memory allocation failed for row %u\n", y);
             for (png_uint_32 i = 0; i < y; i++) {
                 free((*row_pointers)[i]);
             }
@@ -134,13 +134,13 @@ int render_font_to_png(const char *ttf_path, const char *png_path,
 
     // Initialize FreeType
     if (FT_Init_FreeType(&library)) {
-        fprintf(stderr, "Error: FreeType initialization failed\n");
+        fprintf(stderr, "!!> Error: FreeType initialization failed\n");
         return 1;
     }
 
     // Load font
     if (FT_New_Face(library, ttf_path, 0, &face)) {
-        fprintf(stderr, "Error: Font loading failed for %s\n", ttf_path);
+        fprintf(stderr, "!!> Error: Font loading failed for %s\n", ttf_path);
         FT_Done_FreeType(library);
         return 1;
     }
@@ -188,7 +188,7 @@ int render_font_to_png(const char *ttf_path, const char *png_path,
     // Write PNG file
     FILE *fp = fopen(png_path, "wb");
     if (!fp) {
-        fprintf(stderr, "Error: Failed to create output file %s\n", png_path);
+        fprintf(stderr, "!!> Error: Failed to create output file %s\n", png_path);
         for (png_uint_32 y = 0; y < config.png_height; y++) {
             free(row_pointers[y]);
         }
@@ -201,7 +201,7 @@ int render_font_to_png(const char *ttf_path, const char *png_path,
     png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, nullptr, nullptr);
     if (!png) {
         fclose(fp);
-        fprintf(stderr, "Error: PNG write struct creation failed\n");
+        fprintf(stderr, "!!> Error: PNG write struct creation failed\n");
         for (png_uint_32 y = 0; y < config.png_height; y++) {
             free(row_pointers[y]);
         }
@@ -215,7 +215,7 @@ int render_font_to_png(const char *ttf_path, const char *png_path,
     if (!info) {
         png_destroy_write_struct(&png, nullptr);
         fclose(fp);
-        fprintf(stderr, "Error: PNG info struct creation failed\n");
+        fprintf(stderr, "!!> Error: PNG info struct creation failed\n");
         for (png_uint_32 y = 0; y < config.png_height; y++) {
             free(row_pointers[y]);
         }

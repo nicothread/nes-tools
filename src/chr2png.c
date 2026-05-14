@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-c") == 0) {
             i++;
             if (i >= argc) {
-                fprintf(stderr, "Error: Missing -i <input.chr>\n");
+                fprintf(stderr, "!!> Error: Missing -i <input.chr>\n");
                 help();
                 return 1;
             }
@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-o") == 0) {
             i++;
             if (i >= argc) {
-                fprintf(stderr, "Error: Missing -o <output.png>\n");
+                fprintf(stderr, "!!> Error: Missing -o <output.png>\n");
                 help();
                 return 1;
             }
@@ -165,7 +165,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-n") == 0) {
             i++;
             if (i >= argc) {
-                fprintf(stderr, "Error: Missing <input.nametable>\n");
+                fprintf(stderr, "!!> Error: Missing <input.nametable>\n");
                 help();
                 return 1;
             }
@@ -174,12 +174,12 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-r") == 0) {
             i++;
             if (i >= argc) {
-                fprintf(stderr, "Error: Missing <input.ratio: 16 or 32>\n");
+                fprintf(stderr, "!!> Error: Missing <input.ratio: 16 or 32>\n");
                 help();
                 return 1;
             }
             if (strcmp(argv[i], "16") != 0 && strcmp(argv[i], "32") != 0) {
-                fprintf(stderr, "Error: -n <input.ratio: 16 or 32>\n");
+                fprintf(stderr, "!!> Error: -n <input.ratio: 16 or 32>\n");
                 help();
                 return 1;
             }
@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
     }
 
     if (png_path == nullptr || chr_path == nullptr) {
-        fprintf(stderr, "Error: Missing required arguments -c <input.chr> -o <output.png>\n");
+        fprintf(stderr, "!!> Error: Missing required arguments -c <input.chr> -o <output.png>\n");
         help();
         return 1;
     }
