@@ -29,19 +29,12 @@ void convert_chr_nametable_to_png(NES_Screen *screen) {
 
             // Get tile index from nametable, each nam_index is pointing to a tile of TILE_SIZExTILE_SIZE pixels
             int nam_index = (ty * screen->columnsNumber) + tx;
-            uint8_t tile_index = screen->nametable[nam_index];
-
-            int chr_offset = tile_index * 16; // address of tile in the CHR file
-
-            // Check if tile index is within valid range
-            if (chr_offset + 16 > screen->tileset_count) {
-                chr_offset = 0;
-            }
+            uint8_t tile_index = (screen->with_nametable) ? screen->nametable[nam_index] : nam_index;
 
             // Draw current tile
             for (int row = 0; row < TILE_SIZE; row++) {
-                uint8_t plane1 = screen->tileset[chr_offset + row];
-                uint8_t plane2 = screen->tileset[chr_offset + row + 8];
+                uint8_t plane1 = screen->tileset[tile_index].planes[0][row];
+                uint8_t plane2 = screen->tileset[tile_index].planes[1][row];
 
                 // Draw current tile row
                 for (int col = 0; col < TILE_SIZE; col++) {
@@ -67,6 +60,63 @@ void convert_chr_nametable_to_png(NES_Screen *screen) {
 
 void help() {
     printf("Usage: ./chr2png -c <input.chr> [-n <input.nametable>] -o <output.png> [-r <input.ratio: 16 or 32>]\n");
+}
+
+
+int chr2png(const char *chr_path, char *png_path, const char *nametable_path, const int input_ratio) {
+    NES_Screen screen = {0};
+    screen.columnsNumber = input_ratio;
+    screen.with_nametable = nametable_path != nullptr;
+
+    // Read CHR file
+    if (read_chr(&screen, chr_path)) {
+        free_screen(&screen);
+        return EXIT_FAILURE;
+    }
+
+    // Read nametable
+    if (screen.with_nametable)
+    if (read_nametable(&screen, nametable_path)) {
+        free_screen(&screen);
+        return EXIT_FAILURE;
+    }
+
+    // ScreeWidth is number of tiles by row * Size of a tile in pixels
+    screen.widthPixels = screen.columnsNumber * TILE_SIZE;
+
+    // Try to detect screen height output with input tiles/nametable and columnsNumber
+    if (!screen.with_nametable) {
+        // ScreenHeight is number of tiles in total ((tilesetCount/(TileSize*2 (format 2BPP))) / number tiles per row ) * Size of a tile in pixels
+        screen.heightPixels = (screen.tileset_count / screen.columnsNumber) * TILE_SIZE;
+        screen.rowsNumber = screen.tileset_count / screen.columnsNumber;
+    } else {
+        // ScreenHeight is number of indexes in the nametable divide by number of tiles per row * TILE_SIZE
+        screen.heightPixels = (screen.nametable_count / screen.columnsNumber) * TILE_SIZE;
+        screen.rowsNumber = (screen.nametable_count / screen.columnsNumber);
+    }
+
+    printf("Output size: %ux%u\n", screen.widthPixels, screen.heightPixels);
+
+    // Output memory allocation
+    screen.output_pixels = malloc(screen.widthPixels * screen.heightPixels * sizeof(uint32_t));
+    if (!screen.output_pixels) {
+        perror("Memory allocation issue.");
+        free_screen(&screen);
+        return EXIT_FAILURE;
+    }
+
+    convert_chr_nametable_to_png(&screen);
+
+    // Write pixel memory buffer
+    const int success = stbi_write_png(png_path, screen.widthPixels, screen.heightPixels, 4, screen.output_pixels, screen.widthPixels * sizeof(uint32_t));
+    free_screen(&screen);
+
+    if (success) {
+        printf("Successfully converted  %s\n", png_path);
+        return EXIT_SUCCESS;
+    }
+    fprintf(stderr, "An error occurred during PNG file conversion.\n");
+    return EXIT_FAILURE;
 }
 
 int main(int argc, char **argv) {
@@ -132,56 +182,5 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    NES_Screen screen = {0};
-    screen.columnsNumber = input_ratio;
-
-    // Read CHR file
-    if (read_chr(&screen, chr_path)) {
-        free_screen(&screen);
-        return EXIT_FAILURE;
-    }
-
-    // Read nametable
-    if (nametable_path != nullptr)
-    if (read_nametable(&screen, nametable_path)) {
-        free_screen(&screen);
-        return EXIT_FAILURE;
-    }
-
-    // ScreeWidth is number of tiles by row * Size of a tile in pixels
-    screen.widthPixels = screen.columnsNumber * TILE_SIZE;
-
-    // Try to detect screen height output with input tiles/nametable and columnsNumber
-    if (nametable_path == nullptr) {
-        // ScreenHeight is number of tiles in total ((tilesetCount/(TileSize*2 (format 2BPP))) / number tiles per row ) * Size of a tile in pixels
-        screen.heightPixels = ((screen.tileset_count / (TILE_SIZE*2)) / screen.columnsNumber) * TILE_SIZE;
-        screen.rowsNumber = ((screen.tileset_count / TILE_SIZE*2) / screen.columnsNumber);
-    } else {
-        // ScreenHeight is number of indexes in the nametable divide by number of tiles per row * TILE_SIZE
-        screen.heightPixels = (screen.nametable_count / screen.columnsNumber) * TILE_SIZE;
-        screen.rowsNumber = (screen.nametable_count / screen.columnsNumber);
-    }
-
-    printf("Output size: %ux%u\n", screen.widthPixels, screen.heightPixels);
-
-    // Output memory allocation
-    screen.output_pixels = malloc(screen.widthPixels * screen.heightPixels * sizeof(uint32_t));
-    if (!screen.output_pixels) {
-        perror("Memory allocation issue.");
-        free_screen(&screen);
-        return EXIT_FAILURE;
-    }
-
-    convert_chr_nametable_to_png(&screen);
-
-    // Write pixel memory buffer
-    const int success = stbi_write_png(png_path, screen.widthPixels, screen.heightPixels, 4, screen.output_pixels, screen.widthPixels * sizeof(uint32_t));
-    free_screen(&screen);
-
-    if (success) {
-        printf("Successfully converted  %s\n", png_path);
-        return EXIT_SUCCESS;
-    }
-    fprintf(stderr, "An error occurred during PNG file conversion.\n");
-    return EXIT_FAILURE;
+    return chr2png(chr_path, png_path, nametable_path, input_ratio);
 }

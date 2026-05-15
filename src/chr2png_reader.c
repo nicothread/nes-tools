@@ -35,17 +35,21 @@ int read_chr(NES_Screen *screen, const char *chr_path) {
     }
 
     fseek(chr_file, 0, SEEK_END);
-    screen->tileset_count = (int) ftell(chr_file);
+    screen->tileset_bytes_size = ftell(chr_file);
     fseek(chr_file, 0, SEEK_SET);
 
-    screen->tileset = malloc(screen->tileset_count);
+    screen->tileset = malloc(screen->tileset_bytes_size);
     if (!screen->tileset) {
         perror("Memory allocation issue");
         fclose(chr_file);
         return 1;
     }
 
-    fread(screen->tileset, 1, screen->tileset_count, chr_file);
+    fread(screen->tileset, 1, screen->tileset_bytes_size, chr_file);
     fclose(chr_file);
+
+    // Fix number of tiles
+    screen->tileset_count = (int) (screen->tileset_bytes_size / sizeof(Tile));
+
     return 0;
 }

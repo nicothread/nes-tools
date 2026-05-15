@@ -1,10 +1,17 @@
 #ifndef NES_TOOLS_READER_H
 #define NES_TOOLS_READER_H
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
-    unsigned char *tileset; // 2 Bytes per tile
-    int tileset_count; // == tiles number * 2
+    unsigned char planes[2][8];  // 2 bit-planes de 8 bytes chacun
+} Tile;
+
+typedef struct {
+    Tile *tileset; // 2 Bytes per tile
+    size_t tileset_bytes_size;
+    int tileset_count;
+    bool with_nametable;
     unsigned char *nametable;
     int nametable_count;
     uint32_t *output_pixels;
