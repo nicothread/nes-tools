@@ -50,7 +50,7 @@ void export_nametable_grid(const char* nametable_path, const char* output_path, 
     if (output_path != nullptr) {
         FILE* fout = fopen(output_path, "w");
         if (fout == NULL) {
-            printf("Erreur : Impossible de créer le fichier %s\n", output_path);
+            printf("!!> Error: Creation file failed %s\n", output_path);
             free(output);
             return;
         }

@@ -141,7 +141,7 @@ void postprocess_detect_empty_tile_index(NES_Screen* nesScreen) {
         printf("Detected empty tile index %d\n", nesScreen->tile_empty_index );
     }
 
-    for (int i = 0; i < nesScreen->nametable_index; i++) {
+    for (int i = 0; i < NAMETABLE_SIZE; i++) {
         if (nesScreen->nametable[i] == NAMETABLE_UNKNOWN_INDEX) {
             nesScreen->nametable[i] = nesScreen->tile_empty_index;
         }
