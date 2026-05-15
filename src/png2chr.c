@@ -397,8 +397,8 @@ void help() {
     fprintf(stderr, "Usage: png2chr -i <input.png> -o <output.chr>\n");
     fprintf(stderr, "\t[-n <output.nametable>]\n");
     fprintf(stderr, "\t[-r <output.size ratio: 16 or 32, default=32>]\n");
-    fprintf(stderr, "\t[-e <empty-tile.index: auto or index number, default=0>]");
-    fprintf(stderr, "\t[-f <fill-chr to match 256 tiles: true or false, default=true>]");
+    fprintf(stderr, "\t[-e <empty-tile.index: auto or index number, default=0>]\n");
+    fprintf(stderr, "\t[-f <fill-chr to match 256 tiles: true or false, default=true>]\n");
     fprintf(stderr, "\t[--help]\n");
     fprintf(stderr, "\nRequirements:\n");
     fprintf(stderr, "  - PNG must be indexed color (palette-based)\n");
