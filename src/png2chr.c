@@ -2,12 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <png.h>
+#include <stdint.h>
 
 #define TILE_WIDTH 8
 #define TILE_HEIGHT 8
 #define BYTES_PER_TILE 16
 #define CHR_MAX 256
 #define NAMETABLE_SIZE 960
+#define NAMETABLE_UNKNOWN_INDEX (-1)
 
 typedef struct {
     unsigned char planes[2][8];  // 2 bit-planes de 8 bytes chacun
@@ -16,7 +18,7 @@ typedef struct {
 typedef struct {
     Tile tileset[CHR_MAX];
     int tileset_count;
-    unsigned char nametable[NAMETABLE_SIZE];
+    int nametable[NAMETABLE_SIZE]; // int during processing and will be converted to unsigned char
     int nametable_index;
     int nametable_uniqueIndex;
     bool with_nametable;
@@ -28,7 +30,6 @@ typedef struct {
     int output_ratio;
     int tile_empty_index;
 } NES_Screen;
-
 
 /**
  * Converts a pixel (0-3) into bits for both NES bitplanes
@@ -101,6 +102,63 @@ void fill_row_with_empty_tile(NES_Screen* nesScreen) {
     process_tile(nesScreen, empty_tile);
 }
 
+// Return default value 0 in case of nothing is detected
+void postprocess_detect_empty_tile_index(NES_Screen* nesScreen) {
+    if  (nesScreen->tile_empty_index >= 0) {
+        return ;
+    }
+
+    printf("Processing tileset to detect empty tile index...\n");
+
+    uint64_t test_tile;
+    int empty_tile_index = -10;
+    for (int i = 0; i < nesScreen->tileset_count; i++) {
+
+        // TODO FIX IT!
+        if (i >= (i/nesScreen->output_ratio) * nesScreen->source_tiles_width &&
+            i < (i/nesScreen->output_ratio) * nesScreen->output_ratio) {
+            continue;
+        }
+
+        memcpy(&test_tile, nesScreen->tileset[i].planes[1], sizeof(test_tile));
+        if(test_tile == 0x0000000000000000ULL || test_tile == 0xFFFFFFFFFFFFFFFFULL) {
+            memcpy(&test_tile, nesScreen->tileset[i].planes[0], sizeof(test_tile));
+            if (test_tile == 0x0000000000000000ULL || test_tile == 0xFFFFFFFFFFFFFFFFULL) {
+                empty_tile_index = i;
+                // Break if tile is filled with color 0 otherwise continue to search
+                if (nesScreen->tileset[i].planes[0][0] == 0 && nesScreen->tileset[i].planes[1][0] == 0) {
+                    break;
+                }
+            }
+        }
+    }
+
+    if (empty_tile_index == -10) {
+        nesScreen->tile_empty_index = 0;
+        printf("No empty tile index detected, default value is used %d\n", nesScreen->tile_empty_index );
+    } else {
+        nesScreen->tile_empty_index = empty_tile_index;
+        printf("Detected empty tile index %d\n", nesScreen->tile_empty_index );
+    }
+
+    for (int i = 0; i < nesScreen->nametable_index; i++) {
+        if (nesScreen->nametable[i] == NAMETABLE_UNKNOWN_INDEX) {
+            nesScreen->nametable[i] = nesScreen->tile_empty_index;
+        }
+    }
+}
+
+void preprocess_detect_empty_tile_index(NES_Screen* nesScreen) {
+    if (nesScreen->tile_empty_index > 0) {
+        printf("Set nametable with empty tile index to %d\n", nesScreen->tile_empty_index);
+        memset(nesScreen->nametable, nesScreen->tile_empty_index, sizeof(nesScreen->nametable));
+    } else if  (nesScreen->tile_empty_index < 0) {
+        memset(nesScreen->nametable, NAMETABLE_UNKNOWN_INDEX, sizeof(nesScreen->nametable));
+    } else {
+        printf("No empty tile index detected, use default value 0\n");
+    }
+}
+
 void extract_tile_and_nametable(NES_Screen* nesScreen, const png_bytep *row_pointers) {
 
     printf("Extracting tiles from source file...\n");
@@ -110,19 +168,23 @@ void extract_tile_and_nametable(NES_Screen* nesScreen, const png_bytep *row_poin
     printf("Output tiles to match a multiple of %d : %ux%u\n",
         nesScreen->output_ratio, nesScreen->output_tiles_width, nesScreen->output_tiles_height);
 
+    preprocess_detect_empty_tile_index(nesScreen);
+
     for (int ty = 0; ty < nesScreen->source_tiles_height; ty++) {
         for (int tx = 0; tx < nesScreen->source_tiles_width; tx++) {
             Tile tile = {0};
             extract_tile(row_pointers, tx, ty, &tile);
             process_tile(nesScreen, tile);
         }
-        // Fill CHR row with empty tiles (first color in the palette 00)
+        // Fill CHR row with empty tiles to be aligned with tile per row (ratio) (first color in the palette 00)
         for (int tx = nesScreen->source_tiles_width; tx < nesScreen->output_tiles_width; tx++) {
             fill_row_with_empty_tile(nesScreen);
         }
     }
 
-    if (nesScreen->tileset_count >= CHR_MAX) {
+    postprocess_detect_empty_tile_index(nesScreen);
+
+    if (nesScreen->tileset_count > CHR_MAX) {
         // Oups! There are too many tiles in the source for a NES :
         fprintf(stderr, "!!> Warning: tileset is full. Some tiles is lost.\n");
     }
@@ -165,7 +227,13 @@ int write_nesScreen(NES_Screen* nesScreen, const char *chr_path, const char *nam
             fprintf(stderr, "!!> Error: File open failed for %s\n", nametable_path);
             return 1;
         }
-        written = fwrite(nesScreen->nametable, 1, NAMETABLE_SIZE, nametable_file);
+
+        // Convert nametable from int to unsigned char (int was used to have -1 value until empty tile detection)
+        uint8_t oBuff[NAMETABLE_SIZE];
+        int count = NAMETABLE_SIZE;
+        while (count--) oBuff[count] = (uint8_t)nesScreen->nametable[count];
+
+        written = fwrite(oBuff, 1, NAMETABLE_SIZE, nametable_file);
         if (written != NAMETABLE_SIZE) {
             fprintf(stderr, "!!> Error: Failed to write nametable to file %s\n", nametable_path);
             fclose(nametable_file);
@@ -319,7 +387,7 @@ int png_to_chr(const char *png_path, const char *chr_path, const char *nametable
         printf("> write output files:\n\t- CHR: %s\n\t- NAMETABLE: %s\n", chr_path, nametable_path);
     } else {
         printf("> %d tiles successfully converted\n", nesScreen.tileset_count);
-        printf("> write output files:\n\t- CHR: %s\n", chr_path, nametable_path);
+        printf("> write output files:\n\t- CHR: %s\n", chr_path);
     }
 
     return write_nesScreen(&nesScreen, chr_path, nametable_path);

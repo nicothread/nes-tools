@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.3)
 project(nes_tools C)
 
-include_directories(include)
+include_directories(lib, include)
 
 # Find and link PNG library
 find_package(PNG REQUIRED)
@@ -15,6 +15,8 @@ add_executable(png2chr
 
 # Create executable for png2chr
 add_executable(chr2png
+        include/reader.h
+        src/chr2png_reader.c
         src/chr2png.c
 )
 
@@ -27,3 +29,10 @@ add_executable(ttf2png
 
 target_link_libraries(ttf2png ${PNG_LIBRARIES})
 target_link_libraries(ttf2png Freetype::Freetype)
+
+# Create executable for nametable
+add_executable(nametable
+        include/reader.h
+        src/chr2png_reader.c
+        src/nametable.c
+)

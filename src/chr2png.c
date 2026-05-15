@@ -1,9 +1,10 @@
+#include "reader.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#include "../lib/stb_image_write.h"
 
 #define TILE_SIZE 8
 
@@ -14,72 +15,10 @@ uint32_t palette[4] = {
     0xFFFFFFFF
 };
 
-typedef struct {
-    unsigned char *tileset; // 2 Bytes per tile
-    int tileset_count; // == tiles number * 2
-    unsigned char *nametable;
-    int nametable_count;
-    uint32_t *output_pixels;
-    int nametable_width;  // used later
-    int nametable_height;  // used later
-    int widthPixels;
-    int heightPixels;
-    int columnsNumber;
-    int rowsNumber;
-} NES_Screen;
-
-void free_screen(NES_Screen *screen) {
+void free_screen(const NES_Screen *screen) {
     free(screen->tileset);
     free(screen->output_pixels);
     free(screen->nametable);
-}
-
-int read_nametable(NES_Screen *screen, char* nam_path) {
-    FILE *nam_file = fopen(nam_path, "rb");
-    if (!nam_file) {
-        perror("Failed to open Nametable file");
-        return 1;
-    }
-
-    fseek(nam_file, 0, SEEK_END);
-    long file_size = ftell(nam_file);
-    fseek(nam_file, 0, SEEK_SET);
-
-    screen->nametable = malloc(file_size);
-    if (!screen->nametable) {
-        perror("Memory allocation issue");
-        fclose(nam_file);
-        return 1;
-    }
-
-    screen->nametable_count = (int) fread(screen->nametable, 1, file_size, nam_file);
-    fclose(nam_file);
-    printf("> Nametable size %d octets.\n", screen->nametable_count);
-
-    return 0;
-}
-
-int read_chr(NES_Screen *screen, char *chr_path) {
-    FILE *chr_file = fopen(chr_path, "rb");
-    if (!chr_file) {
-        perror("Failed to open CHR file");
-        return 1;
-    }
-
-    fseek(chr_file, 0, SEEK_END);
-    screen->tileset_count = (int) ftell(chr_file);
-    fseek(chr_file, 0, SEEK_SET);
-
-    screen->tileset = malloc(screen->tileset_count);
-    if (!screen->tileset) {
-        perror("Memory allocation issue");
-        fclose(chr_file);
-        return 1;
-    }
-
-    fread(screen->tileset, 1, screen->tileset_count, chr_file);
-    fclose(chr_file);
-    return 0;
 }
 
 void convert_chr_nametable_to_png(NES_Screen *screen) {
