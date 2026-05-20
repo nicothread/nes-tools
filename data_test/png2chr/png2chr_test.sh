@@ -19,3 +19,6 @@ ${PNG2CHR_PREFIX}/png2chr -i ./title.png -o ./title_3.chr -r 32 -f false -e auto
 
 # 4- Generate CHR without nametable, CHR with 16 tiles by row, fix empty tile index to 0
 ${PNG2CHR_PREFIX}/png2chr -i ./title.png -o ./title_4.chr -r 16 -f false -e 0
+
+# 4- Generate CHR without nametable, CHR with 16 tiles by row, fix empty tile index to 0
+${PNG2CHR_PREFIX}/png2chr -i ./characters_8x16.png -o ./characters_8x16.chr -r 16 -f false
